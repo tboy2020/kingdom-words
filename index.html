@@ -77,7 +77,17 @@
   /* ---------- audio / tts ---------- */
   var actx=null,tts=false;
   function unlock(){ try{ if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended')actx.resume(); if(window.speechSynthesis){var u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);} tts=true; }catch(e){} }
-  function say(t,cb,opts){ opts=opts||{}; if(!window.speechSynthesis||!tts){ if(cb)setTimeout(cb,350); return; } try{ speechSynthesis.cancel(); var u=new SpeechSynthesisUtterance(t); u.rate=opts.rate||0.9; u.pitch=opts.pitch==null?1.05:opts.pitch; var done=false; function fire(){ if(done)return; done=true; if(cb)cb(); } u.onend=fire; u.onerror=fire; setTimeout(fire, Math.max(800,String(t).length*95)+350); speechSynthesis.speak(u);}catch(e){if(cb)cb();} }
+  var _spQ=[], _spOn=false, _spGen=0;
+  function stopSpeech(){ _spGen++; _spQ=[]; _spOn=false; if(window.speechSynthesis){ try{speechSynthesis.cancel();}catch(e){} } }
+  function say(t,cb,opts){ _spQ.push({t:String(t),cb:cb,opts:opts||{}}); _pump(); }
+  function _pump(){ if(_spOn) return; var it=_spQ.shift(); if(!it) return; _spOn=true; var g=_spGen;
+    if(!window.speechSynthesis||!tts){ setTimeout(function(){ if(g!==_spGen)return; _spOn=false; if(it.cb)it.cb(); _pump(); },300); return; }
+    try{ var u=new SpeechSynthesisUtterance(it.t); u.rate=it.opts.rate||0.9; u.pitch=it.opts.pitch==null?1.05:it.opts.pitch; var done=false;
+      function fin(){ if(done||g!==_spGen)return; done=true; _spOn=false; if(it.cb)it.cb(); _pump(); }
+      u.onend=fin; u.onerror=fin; setTimeout(fin, Math.max(800,it.t.length*95)+450);
+      speechSynthesis.speak(u);
+    }catch(e){ _spOn=false; if(it.cb)it.cb(); _pump(); }
+  }
   function speakSpell(word,perLetter,doneCb){ var i=0; (function step(){ if(i<word.length){ if(perLetter)perLetter(i); say(word[i],step,{rate:0.82}); i++; } else { say(word+'!',doneCb,{rate:0.82}); } })(); }
   function tone(f,d,ty,v){ if(!actx)return; try{var o=actx.createOscillator(),g=actx.createGain();o.type=ty||'sine';o.frequency.value=f;g.gain.value=v==null?0.12:v;o.connect(g);g.connect(actx.destination);var n=actx.currentTime;g.gain.setValueAtTime(g.gain.value,n);g.gain.exponentialRampToValueAtTime(0.0001,n+(d||0.18));o.start(n);o.stop(n+(d||0.18));}catch(e){} }
   function good(){ tone(660,0.1,'sine',.14); setTimeout(function(){tone(990,0.16,'sine',.14);},90); }
@@ -98,7 +108,7 @@
   var THEME_WORDS={}; for(var pk in PACKS){ PACKS[pk].words.forEach(function(w){ THEME_WORDS[w[0]]=PACKS[pk].name; DICT[w[0]]=1; }); }
 
   /* ---------- helpers ---------- */
-  function render(h){ if(window.speechSynthesis)speechSynthesis.cancel(); app.innerHTML=h; }
+  function render(h){ stopSpeech(); app.innerHTML=h; }
   function $(s,r){return (r||document).querySelector(s);}
   function $all(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s));}
   function on(e,ev,f){ if(e)e.addEventListener(ev,f); }
@@ -109,7 +119,7 @@
     render('<div class="screen"><div style="font-size:72px;margin-top:30px">🔤👑</div><h1>Kingdom Words</h1>'+
       '<p class="ref">Spell · Learn · Grow in the Word</p>'+
       '<button class="btn" id="go">Tap to Begin ▶</button>'+
-      '<p class="hint">Sound on, please — the letters and words are read aloud.</p><p class="hint" style="opacity:.5">v1.2 · tap-to-place</p></div>');
+      '<p class="hint">Sound on, please — the letters and words are read aloud.</p><p class="hint" style="opacity:.5">v1.3 · clean audio</p></div>');
     on($('#go'),'click',function(){ unlock(); setTimeout(menu,120); });
   }
   function menu(){
@@ -146,7 +156,7 @@
       var slots=$all('.slot');
       var tilesEls=$all('#tiles .tile');
       function glowNext(){ tilesEls.forEach(function(x){x.classList.remove('hint');}); if(filled.length>=word.length)return; var need=word[filled.length]; for(var i=0;i<tilesEls.length;i++){ if(!tilesEls[i].classList.contains('used') && tilesEls[i].getAttribute('data-l')===need){ tilesEls[i].classList.add('hint'); break; } } }
-      function speakWord(){ say('Spell '+word+'.',function(){ speakSpell(word,null,function(){ glowNext(); }); }); }
+      function speakWord(){ stopSpeech(); say('Spell '+word+'!',function(){ glowNext(); }); }
       setTimeout(speakWord,250);
       on($('#hear'),'click',speakWord);
       on($('#mic'),'click',function(){ doMic(word,$('#mic')); });
@@ -155,8 +165,8 @@
         if(t.classList.contains('used'))return;
         var need=word[filled.length];
         if(t.getAttribute('data-l')===need){ t.classList.add('used'); t.classList.remove('hint'); slots[filled.length].textContent=need; slots[filled.length].classList.add('filled'); filled.push(need); good(); say(need,null,{rate:0.82}); glowNext();
-          if(filled.length===word.length){ cheer(); var line=THEME_WORDS[word]?(' A '+pack.name+' word!'):''; setTimeout(function(){ slots.forEach(function(s){s.classList.remove('lit');}); speakSpell(word,function(i){ if(slots[i])slots[i].classList.add('lit'); },function(){ say('Well done!'+line); }); },250);
-            setTimeout(function(){ idx++; if(idx>=words.length){ done(); } else { round(); } },2700); }
+          if(filled.length===word.length){ cheer(); var line=THEME_WORDS[word]?(' A '+pack.name+' word!'):''; slots.forEach(function(s){s.classList.remove('lit');}); stopSpeech();
+            speakSpell(word,function(i){ if(slots[i])slots[i].classList.add('lit'); },function(){ say('Well done!'+line,function(){ idx++; if(idx>=words.length){ done(); } else { round(); } }); }); }
         } else { t.classList.add('shake'); buzz(); say('Try the '+need+' sound',null,{rate:0.82}); setTimeout(function(){t.classList.remove('shake');},400); }
       }); });
     }
@@ -214,7 +224,7 @@
         '<div class="row"><button class="btn ghost small" id="hear">🔊 Hear it</button><button class="btn" id="next">Next ▶</button></div>'+
         '<p class="hint">Listen to the word, then tap Next.</p></div>');
       var wt=$all('#wtiles .wtile');
-      function playSound(){ wt.forEach(function(x){x.classList.remove('lit');}); speakSpell(word,function(i){ if(wt[i])wt[i].classList.add('lit'); },function(){ for(var k=0;k<wt.length;k++)wt[k].classList.add('lit'); }); }
+      function playSound(){ stopSpeech(); wt.forEach(function(x){x.classList.remove('lit');}); speakSpell(word,function(i){ if(wt[i])wt[i].classList.add('lit'); },function(){ for(var k=0;k<wt.length;k++)wt[k].classList.add('lit'); }); }
       setTimeout(playSound,300);
       on($('#hear'),'click',playSound);
       on($('#next'),'click',function(){ if(p.score>=TARGET){ win(p); return; } turn=(turn+1)%players.length; var np=players[turn]; if(mode==='fam')np._seen=false; if(np.ai){ aiTurn(); } else { draw(); } });
@@ -257,7 +267,7 @@
         words.sort(function(a,b){ var ta=THEME_WORDS[a]?1:0,tb=THEME_WORDS[b]?1:0; if(ta!==tb)return tb-ta; var pa=(a.length>=3&&a.length<=4)?0:1,pb=(b.length>=3&&b.length<=4)?0:1; if(pa!==pb)return pa-pb; return a.length-b.length; });
         var word=words[0]; var seq=rackIndicesFor(word,p.rack); if(!seq)return;
         var rackEls=$all('#rack .tile'); rackEls.forEach(function(x){ x.classList.remove('hint'); var o=x.querySelector('.ord'); if(o)o.remove(); });
-        $('#msg').textContent='Try spelling: '+word;
+        $('#msg').textContent='Try spelling: '+word; stopSpeech();
         var i=0; (function step(){ if(i<word.length){ var el=rackEls[seq[i]]; if(el && !el.classList.contains('used')){ el.classList.add('hint'); var sp=document.createElement('span'); sp.className='ord'; sp.textContent=(i+1); el.appendChild(sp); } say(word[i],step,{rate:0.82}); i++; } else { say(word,null,{rate:0.82}); } })();
       });
       on($('#play'),'click',function(){
